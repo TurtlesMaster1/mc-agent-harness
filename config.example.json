@@ -72,5 +72,6 @@
   "wardenExempt": [
     "your_minecraft_name"
   ],
-  "publicView": false
+  "publicView": false,
+  "joinHost": ""
 }

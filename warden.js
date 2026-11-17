@@ -1,5 +1,5 @@
 // "Warden": a silent operator player that keeps every visitor in spectator mode.
-// Agents (from config.json) and the names in config.json "wardenExempt" are left alone; anyone else
+// Agents (from config.json), the names in config.json "wardenExempt" and the guest bots in guests.json are left alone; anyone else
 // who joins is switched to spectator at once, so they can watch but cannot touch the world or the agents.
 // The Warden must be an operator on the server (add it to ops.json or run "op Warden" in the console).
 const fs = require('fs')
@@ -10,6 +10,8 @@ const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf
 const NAME = 'Warden'
 const EXEMPT = new Set([...(cfg.wardenExempt || []), NAME].map(s => s.toLowerCase()))
 const agents = new Set(cfg.agents.map(a => a.name.toLowerCase()))
+// other people's bots that may play: names in guests.json (a JSON array), re-read on every check so it can be edited while running
+const guests = () => { try { return new Set(JSON.parse(fs.readFileSync(path.join(__dirname, 'guests.json'), 'utf8')).map(s => String(s).toLowerCase())) } catch { return new Set() } }
 const log = (...a) => { const line = `${new Date().toISOString().slice(11, 19)} ${a.join(' ')}`; console.log(line); try { fs.appendFileSync(path.join(__dirname, 'warden.log'), line + '\n') } catch {} }
 
 function start () {
@@ -17,7 +19,8 @@ function start () {
   const done = new Set()
   const enforce = name => {
     const key = String(name).toLowerCase()
-    if (agents.has(key) || EXEMPT.has(key)) return
+    if (guests().has(key) && done.has(key)) { done.delete(key); bot.chat(`/gamemode survival ${name}`); log(`guest ${name} released to survival`) } // added to guests.json after joining
+    if (agents.has(key) || EXEMPT.has(key) || guests().has(key)) return
     bot.chat(`/gamemode spectator ${name}`)
     if (!done.has(key)) { done.add(key); log(`visitor ${name} set to spectator`) }
   }

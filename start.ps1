@@ -7,7 +7,19 @@ if (-not (Test-Path "$here\config.json")) { Write-Host 'no config.json: copy con
 $cfg = Get-Content "$here\config.json" -Raw | ConvertFrom-Json
 & "$here\stop.cmd" | Out-Null
 
-if (-not (Test-Port $cfg.mcPort)) {
+# joining someone else's server: either mcHost points at it directly, or joinHost names their Cloudflare
+# tunnel, which is forwarded to 127.0.0.1:mcPort here
+$remote = $cfg.joinHost -or ($cfg.mcHost -notin '127.0.0.1', 'localhost')
+if ($cfg.joinHost) {
+  $cf = (Get-Command cloudflared -ErrorAction SilentlyContinue).Source
+  if (-not $cf) { Write-Host 'joinHost is set but cloudflared is not on PATH'; exit 1 }
+  if (-not (Test-Port $cfg.mcPort)) {
+    Start-Process $cf -ArgumentList 'access','tcp','--hostname',$cfg.joinHost,'--url',"127.0.0.1:$($cfg.mcPort)",'--logfile',"$here\join-tunnel.log" -WorkingDirectory $here -WindowStyle Hidden
+    foreach ($i in 1..15) { if (Test-Port $cfg.mcPort) { break }; Start-Sleep 1 }
+  }
+  Write-Host "joining $($cfg.joinHost)"
+}
+if (-not $remote -and -not (Test-Port $cfg.mcPort)) {
   if (-not (Test-Path "$here\server\server.jar")) { Write-Host "nothing is listening on port $($cfg.mcPort) and there is no server\server.jar; see README"; exit 1 }
   Write-Host 'starting Minecraft server...'
   Start-Process (Get-Command java).Source -ArgumentList '-Xms512M','-Xmx1G','-jar','server.jar','nogui' `
@@ -44,7 +56,7 @@ if ($cfg.brain -eq 'claude-code') {
 
 # public Minecraft address (Cloudflare TCP tunnel) plus the Warden that keeps visitors in spectator,
 # when config.json has "publicMinecraft": true
-if ($cfg.publicMinecraft) {
+if ($cfg.publicMinecraft -and -not $remote) {
   Start-Process $node -ArgumentList "`"$here\warden.js`"" -WorkingDirectory $here -WindowStyle Hidden -RedirectStandardOutput "$here\warden-out.log" -RedirectStandardError "$here\warden-err.log"
   if ($cloudflared) {
     if (-not (Get-CimInstance Win32_Process -Filter "Name='cloudflared.exe'" | Where-Object CommandLine -match "tcp://127\.0\.0\.1:$($cfg.mcPort)")) {

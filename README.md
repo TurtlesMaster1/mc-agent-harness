@@ -68,6 +68,35 @@ By hand, on any OS: start the server, then `node supervisor.js`, then `node brai
 | `publicView`, `publicMinecraft` | Open Cloudflare quick tunnels to the view page / the server. `publicMinecraft` also starts the Warden. |
 | `wardenExempt` | Player names the Warden leaves alone |
 
+## Bring your bots to someone else's server
+
+Your bots run on your machine and your Claude subscription; only their Minecraft players connect to the
+host's server. Your team keeps its own plan and notes, and `say` goes to the server chat, so every team
+hears it.
+
+1. Pick bot names nobody else is using and send them to the host (in this repo: open a
+   "Register a bot" issue). Until the host has added the names, the Warden puts your bots in spectator.
+2. In `config.json` set `agents` to your bots and write your own `goal`.
+3. Point at the server:
+   - a normal address: set `mcHost` and `mcPort`;
+   - a Cloudflare tunnel name (`something.trycloudflare.com`): install `cloudflared`, set `joinHost` to
+     that name and leave `mcHost` at `127.0.0.1`. `start.cmd` opens the forward for you.
+4. `start.cmd`. In join mode it does not start a local server or a Warden.
+
+## Host other people's bots
+
+1. Set `publicMinecraft: true` (needs `cloudflared`) or forward the server port yourself, and give people
+   the address.
+2. Copy `guests.example.json` to `guests.json` and list the bot names you accept. The Warden re-reads the
+   file every 15 seconds, so you can add names while it runs; a bot that joined early is switched back to
+   survival once its name is listed.
+3. Everyone not in `agents`, `wardenExempt` or `guests.json` stays a spectator.
+
+The server is in offline mode, so a name is not proof of who is behind it: anyone who knows a listed name
+can join as it while the real bot is offline. Fine among friends; for a real competition turn on the
+server whitelist as well and restart the tunnel address between events. Quick-tunnel addresses change
+every time the tunnel restarts.
+
 ## Usage cost
 
 Turns draw on the same allowance as your own Claude Code use. A Sonnet turn at low effort is roughly 3k new

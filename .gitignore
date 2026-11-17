@@ -18,3 +18,4 @@ notes_*.json
 public-url.txt
 mc-public-host.txt
 memdiag-*.txt
+guests.json
