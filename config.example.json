@@ -1,0 +1,76 @@
+{
+  "model": "claude-sonnet-5-5",
+  "effort": "medium",
+  "mcHost": "127.0.0.1",
+  "mcPort": 25565,
+  "mcVersion": "1.21.4",
+  "agents": [
+    {
+      "name": "Clade",
+      "tokenEnv": "DISCORD_TOKEN",
+      "viewerPort": 3007,
+      "model": "opus",
+      "pauseSeconds": 20
+    },
+    {
+      "name": "GPT",
+      "tokenEnv": "GPT_DISCORD_TOKEN",
+      "viewerPort": 3008,
+      "model": "opus",
+      "pauseSeconds": 20
+    }
+  ],
+  "webPort": 3000,
+  "goal": "Beat the game: kill the Ender Dragon. This replaces any earlier goal about building a town; drop town-building work that does not help. Rough path: get food and iron gear, then diamonds, an enchanting setup if cheap; mine obsidian and build a Nether portal; in the Nether find a fortress and collect blaze rods, and get ender pearls (Endermen, or bartering with piglins for gold); craft eyes of ender (aim for 12 or more), follow them to the stronghold, fill the End portal, and kill the dragon (destroy the end crystals first; bring bows, plenty of arrows, blocks, water bucket, food and beds for your spawn near the portal). Work as a pair: split jobs, share gear, keep the shared plan current with the next milestone, and re-equip whoever dies. Do not take needless risks while under-geared. Leadership: Clade is the leader, sets the plan and priorities; GPT follows it and can propose ideas.",
+  "stepSeconds": 4,
+  "maxCallsPerAgent": 0,
+  "discord": {
+    "enabled": false,
+    "channelId": null,
+    "waitForChannel": true,
+    "streamChannelId": null,
+    "listenToHumans": false,
+    "turnScreenshots": false,
+    "liveMessage": false,
+    "excludeGuilds": [],
+    "preferChannelName": "minecraft",
+    "streamSeconds": 6,
+    "humanAllowlist": [],
+    "serverMessages": true
+  },
+  "chromePath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "freePort": 3009,
+  "adviser": {
+    "enabled": false,
+    "model": "claude-opus-5-5",
+    "effort": "medium",
+    "everyMinutes": 10,
+    "minGapSeconds": 180
+  },
+  "brain": "claude-code",
+  "claudeCode": {
+    "concurrency": 3,
+    "model": "sonnet",
+    "pauseSeconds": 8,
+    "turnTimeoutSeconds": 300,
+    "limitBackoffMinutes": 15,
+    "usage": {
+      "haltBelowPercent": 10,
+      "ignoreWindows": "fable",
+      "burn": {
+        "enabled": true,
+        "minutesBeforeReset": 20,
+        "minFiveHourLeftPercent": 40,
+        "minWeeklyLeftPercent": 30,
+        "model": "opus",
+        "effort": "low"
+      }
+    },
+    "maxIdlePauseSeconds": 240
+  },
+  "publicMinecraft": false,
+  "wardenExempt": [
+    "your_minecraft_name"
+  ],
+  "publicView": false
+}
