@@ -46,6 +46,8 @@ const TURN = 'It is your turn. Call observe first, then do real work with your t
 const usageCfg = Object.assign({ haltBelowPercent: 10, ignoreWindows: 'fable' }, cc.usage || {})
 usageCfg.burn = Object.assign({ enabled: true, minutesBeforeReset: 20, minFiveHourLeftPercent: 40, minWeeklyLeftPercent: 30, model: 'opus', effort: 'low' }, (cc.usage || {}).burn || {})
 const windows = {} // name -> { left (percent), resetsAt (ms), seenAt }
+// start from the last numbers seen, so a restart during a halt stays halted instead of spending a turn to find out
+try { Object.assign(windows, JSON.parse(fs.readFileSync(path.join(HERE, 'usage.json'), 'utf8')).windows || {}) } catch {}
 let lastMode = ''
 function noteUsage (info) {
   if (!info) return

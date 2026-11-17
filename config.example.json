@@ -52,7 +52,7 @@
     "concurrency": 3,
     "model": "sonnet",
     "pauseSeconds": 8,
-    "turnTimeoutSeconds": 300,
+    "turnTimeoutSeconds": 600,
     "limitBackoffMinutes": 15,
     "usage": {
       "haltBelowPercent": 10,

@@ -103,6 +103,12 @@ ${EXTERNAL_BRAIN ? '- You play in short turns. At the start of every turn call t
   - Do dangerous jobs with a partner, and if a teammate is hurt, lost or has died, go and help.
 ${(cfg.discord.listenToHumans || (cfg.discord.humanAllowlist || []).length) ? '- Messages from humans are instructions from the people running this world. Follow them, and they take priority over the shared goal.\n' : ''}- Item and block names are Minecraft ids, like oak_log, oak_planks, crafting_table, wooden_pickaxe, cobblestone.
 - Dying is costly: keep-inventory is OFF, so when you die everything you carry drops where you died and vanishes after about 5 minutes, and you respawn at the world spawn with nothing. Wear armour, keep food up, shelter or seal yourself in at night, do not dig straight down, and store valuables (diamonds, spare iron, obsidian) in the base chest before risky trips.
+- Your body looks after itself, so do not spend calls on these: it puts on the best armour you carry, eats from your inventory when you are hungry or hurt, and swings at any monster within reach (not creepers: walk away from those). It cannot eat food you do not have, so always carry cooked food.
+- Staying alive comes first. A death costs far more than the time it saves.
+  - Nights: make a bed early (3 wool of one colour + 3 planks) and carry it. At dusk place it somewhere enclosed and sleep with use_on; when every player sleeps the night is skipped, and the bed becomes your respawn point. Without a bed, be sealed in before dark and use one long wait.
+  - Never craft, smelt or sort items while something is attacking you or while your health is under 8: get away or wall yourself in first, then recover.
+  - Before going underground or far from base: a sword, a pickaxe, at least 8 cooked food, 16 torches and 20 blocks to wall off with. Make a shield (1 iron + 6 planks) as soon as you have iron.
+  - After a death, do not run back for your items unless they are close and it is day.
 - If a tool fails, read the error and try something different instead of repeating it.
 - Use note for anything you must remember (base location, plan); you have no other memory beyond the recent log shown each turn.`
 }
@@ -143,6 +149,7 @@ function connect (a) {
     bot.pathfinder.thinkTimeout = 8000
     a.mcData = require('minecraft-data')(bot.version)
     a.ready = true
+    startReflexes(a)
     log(`[${a.name}] spawned at ${bot.entity.position.floored()}`)
     if (!a.viewerStarted) {
       a.viewerStarted = true
@@ -206,10 +213,77 @@ function connect (a) {
   bot.on('end', r => {
     log(`[${a.name}] disconnected (${r}); reconnecting in 10s`)
     a.ready = false
+    clearInterval(a.reflexTimer)
     for (const v of a.viewers || []) { try { v.close() } catch {} }
     a.viewerStarted = false
     if (!stopping) setTimeout(() => connect(a), 10000)
   })
+}
+
+// ------------------------------------------------------------- reflexes ----
+// Things a player does without thinking, so no turn is spent on them and they still happen
+// between turns: wear the best armour carried, eat when hungry, hit back at a monster in reach.
+const TIER = ['wooden', 'golden', 'leather', 'stone', 'chainmail', 'iron', 'diamond', 'netherite']
+const tierOf = name => TIER.indexOf(String(name).split('_')[0])
+const ARMOUR = [['head', 5, /_helmet$/], ['torso', 6, /_chestplate$/], ['legs', 7, /_leggings$/], ['feet', 8, /_boots$/]]
+const NO_MELEE = new Set(['creeper', 'enderman', 'zombified_piglin', 'piglin', 'ghast', 'ender_dragon', 'warden', 'wither'])
+const BAD_FOOD = new Set(['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pufferfish', 'chicken', 'golden_apple', 'enchanted_golden_apple', 'chorus_fruit', 'suspicious_stew'])
+function bestWeapon (bot) {
+  const score = i => (/_sword$/.test(i.name) ? 10 : /_axe$/.test(i.name) ? 5 : -100) + tierOf(i.name)
+  return bot.inventory.items().filter(i => score(i) > 0).sort((x, y) => score(y) - score(x))[0]
+}
+function startReflexes (a) {
+  const bot = a.bot
+  clearInterval(a.reflexTimer)
+  let busy = false
+  let lastSlow = 0
+  const handFree = () => !a.doing || /^(goto|goto_player|wait|attack)\b/.test(a.doing)
+  const calm = () => !a.doing || /^(goto|goto_player|wait|mine|attack|dig)\b/.test(a.doing)
+  a.reflexTimer = setInterval(async () => {
+    if (busy || !a.ready || !bot.entity || !(bot.health > 0)) return
+    busy = true
+    try {
+      const me = bot.entity.position
+      // hit back: a swing does not need the player to turn, so walking and digging carry on
+      const foe = bot.nearestEntity(e => e.type === 'hostile' && !NO_MELEE.has(e.name) && e.position.distanceTo(me) < 3.6)
+      if (foe) {
+        const w = bestWeapon(bot)
+        if (w && handFree() && !bot.targetDigBlock && (!bot.heldItem || bot.heldItem.type !== w.type)) await bot.equip(w, 'hand').catch(() => {})
+        bot.attack(foe)
+        if (!a.reflexFoe || Date.now() - a.reflexFoe > 20000) log(`[${a.name}] reflex: fighting ${foe.name}`)
+        a.reflexFoe = Date.now()
+        return
+      }
+      if (Date.now() - lastSlow < 4000) return
+      lastSlow = Date.now()
+      // armour: put on anything better than what is worn
+      if (calm() && !bot.currentWindow) {
+        for (const [dest, slot, re] of ARMOUR) {
+          const worn = bot.inventory.slots[slot]
+          const best = bot.inventory.items().filter(i => re.test(i.name)).sort((x, y) => tierOf(y.name) - tierOf(x.name))[0]
+          if (best && (!worn || tierOf(best.name) > tierOf(worn.name))) {
+            await bot.equip(best, dest).catch(() => {})
+            log(`[${a.name}] reflex: put on ${best.name}`)
+            a.remember(`EVENT: you put on ${best.name} (done automatically).`)
+          }
+        }
+      }
+      // food: eat when hungry, or when hurt and not full (health only comes back on a full stomach)
+      if (handFree() && !bot.currentWindow && !bot.targetDigBlock && (bot.food <= 14 || (bot.health < 14 && bot.food < 20))) {
+        const foods = a.mcData.foodsByName
+        const pick = bot.inventory.items().filter(i => foods[i.name] && (bot.food <= 6 ? !/golden_apple|chorus|pufferfish|stew/.test(i.name) : !BAD_FOOD.has(i.name)))
+          .sort((x, y) => (foods[y.name].foodPoints || 0) - (foods[x.name].foodPoints || 0))[0]
+        if (pick) {
+          const held = bot.heldItem
+          await bot.equip(pick, 'hand')
+          await withTimeout(bot.consume(), 6000)
+          if (held && bot.inventory.items().some(i => i.type === held.type)) await bot.equip(held.type, 'hand').catch(() => {})
+          log(`[${a.name}] reflex: ate ${pick.name} (food ${bot.food}/20)`)
+          a.remember(`EVENT: you ate ${pick.name} (done automatically). Food ${bot.food}/20.`)
+        }
+      }
+    } catch (e) { /* a reflex that fails is simply tried again later */ } finally { busy = false }
+  }, 650)
 }
 
 // ----------------------------------------------------- tool implementations
@@ -250,7 +324,9 @@ async function travel (bot, x, y, z, range = 1, budgetMs = 120000) {
   const dest = new Vec3(x, y, z)
   let fails = 0
   let lastErr = null
+  const run = bot.run || {}
   while (Date.now() < end) {
+    if (run.cancelled) throw new Error('stopped')
     const me = bot.entity.position
     const flat = Math.hypot(dest.x - me.x, dest.z - me.z)
     if (me.distanceTo(dest) <= range + 1.5) return true
@@ -335,7 +411,8 @@ const impl = {
     let tries = 0
     if (a.bot.inventory.emptySlotCount() === 0) return `your inventory is full (${invText(a.bot)}). Put items in a chest (chest put), give some away, or craft them into something before mining more.`
     const deadline = Date.now() + 75000 // one mining action never runs longer than this
-    while (got < count && tries < count + 6 && Date.now() < deadline) {
+    const run = a.bot.run || {}
+    while (got < count && tries < count + 6 && Date.now() < deadline && !run.cancelled) {
       tries++
       const spots = a.bot.findBlocks({ matching: def.id, maxDistance: 48, count: 24 }).filter(p => !bad.has(p.toString()))
       if (!spots.length) break
@@ -358,13 +435,41 @@ const impl = {
   async craft (a, { item, count = 1 }) {
     const def = a.mcData.itemsByName[item]
     if (!def) return `unknown item "${item}"`
-    const table = a.bot.findBlock({ matching: a.mcData.blocksByName.crafting_table.id, maxDistance: 4 })
-    const recipes = a.bot.recipesFor(def.id, null, 1, table)
+    const tableId = a.mcData.blocksByName.crafting_table.id
+    let table = a.bot.findBlock({ matching: tableId, maxDistance: 4 })
+    let recipes = a.bot.recipesFor(def.id, null, 1, table)
+    let setUp = ''
+    if (!recipes.length && !table && item !== 'crafting_table' && a.bot.recipesAll(def.id, null, true).length > 0) {
+      // a 3x3 recipe with no table in reach: walk to one nearby, or put down the one carried (making it first if planks allow)
+      const far = a.bot.findBlock({ matching: tableId, maxDistance: 24 })
+      if (far) {
+        await walkTo(a.bot, new goals.GoalNear(far.position.x, far.position.y, far.position.z, 2), 20000).catch(() => {})
+        setUp = `walked to the crafting table at ${fmt(far.position)}; `
+      } else {
+        if (!findItem(a.bot, 'crafting_table')) {
+          const tr = a.bot.recipesFor(a.mcData.itemsByName.crafting_table.id, null, 1, null)[0]
+          if (tr) await withTimeout(a.bot.craft(tr, 1, null), 10000).catch(() => {})
+          await sleep(400)
+        }
+        if (findItem(a.bot, 'crafting_table')) setUp = `${await impl.place(a, { item: 'crafting_table' })} (crafting table put down for you); `
+      }
+      table = a.bot.findBlock({ matching: tableId, maxDistance: 4 })
+      recipes = a.bot.recipesFor(def.id, null, 1, table)
+    }
     if (!recipes.length) {
-      const needsTable = !table && a.bot.recipesAll(def.id, null, true).length > 0
-      return needsTable
-        ? `cannot craft ${item}: needs a crafting_table within 4 blocks (or you lack materials). Inventory: ${invText(a.bot)}`
-        : `cannot craft ${item}: missing materials. Inventory: ${invText(a.bot)}`
+      // say exactly what is missing, from the first known recipe
+      let missing = ''
+      try {
+        const r = a.bot.recipesAll(def.id, null, true)[0]
+        if (r) {
+          const need = {}
+          for (const d of r.delta) if (d.count < 0) need[d.id] = (need[d.id] || 0) - d.count
+          missing = Object.entries(need).map(([id, n]) => `${n} ${a.mcData.items[id].name} (have ${a.bot.inventory.count(Number(id))})`).join(', ')
+        }
+      } catch {}
+      return !table && a.bot.recipesAll(def.id, null, true).length > 0 && item !== 'crafting_table' && !missing
+        ? `cannot craft ${item}: no crafting_table in reach and none could be made. Inventory: ${invText(a.bot)}`
+        : `cannot craft ${item}: ${table || item === 'crafting_table' ? '' : 'no crafting_table within 4 blocks, and '}one recipe needs ${missing || 'materials you lack'}${missing ? ' (other wood or stone types may also work)' : ''}. Inventory: ${invText(a.bot)}`
     }
     // count = how many items are wanted; one run of a recipe can give several
     const per = recipes[0].result.count || 1
@@ -375,7 +480,7 @@ const impl = {
     await withTimeout(a.bot.craft(recipe, runs, table), 20000)
     await sleep(600)
     const made = a.bot.inventory.count(def.id) - had
-    return `crafted ${made} ${item}${made < count ? ` (wanted ${count}; not enough materials for more)` : ''}. Inventory: ${invText(a.bot)}`
+    return `${setUp}crafted ${made} ${item}${made < count ? ` (wanted ${count}; not enough materials for more)` : ''}. Inventory: ${invText(a.bot)}`
   },
   async place (a, { item, x, y, z }) {
     const it = findItem(a.bot, item)
@@ -386,13 +491,24 @@ const impl = {
     const empty = b => b && (b.name === 'air' || b.name === 'cave_air' || b.boundingBox === 'empty')
     let spot
     if (x === undefined || y === undefined || z === undefined) {
+      // no coordinates: try the free spots around the player one after another until the server accepts one
       const me = bot.entity.position.floored()
-      outer: for (let r = 1; r <= 2; r++) for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) for (const dy of [0, 1, -1]) {
-        if (dx === 0 && dz === 0) continue
+      const spots = []
+      for (let r = 1; r <= 2; r++) for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) for (const dy of [0, 1, -1]) {
+        if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue
         const p = me.offset(dx, dy, dz)
-        if (empty(bot.blockAt(p)) && solid(bot.blockAt(p.offset(0, -1, 0)))) { spot = p; break outer }
+        if (empty(bot.blockAt(p)) && solid(bot.blockAt(p.offset(0, -1, 0)))) spots.push(p)
       }
-      if (!spot) return 'no free spot next to you; give coordinates'
+      if (!spots.length) return 'no free spot next to you; give coordinates'
+      let last = ''
+      for (const p of spots.slice(0, 5)) {
+        if (!findItem(bot, item)) break
+        try {
+          last = await impl.place(a, { item, x: p.x, y: p.y, z: p.z })
+          if (!/is now (air|cave_air)$/.test(last) && /is now /.test(last)) return last
+        } catch (e) { last = `FAILED: ${e.message}` }
+      }
+      return `could not place ${item} next to you (last try: ${last}). Move to open ground or give coordinates.`
     } else {
       spot = new Vec3(Math.floor(x), Math.floor(y), Math.floor(z))
       if (!empty(bot.blockAt(spot))) return `${fmt(spot)} is not empty (it is ${bot.blockAt(spot)?.name})`
@@ -455,10 +571,12 @@ const impl = {
     const find = () => bot.nearestEntity(e => e.name === entity && e.position.distanceTo(bot.entity.position) < 24)
     let target = find()
     if (!target) return `no ${entity} within 24 blocks`
-    const weapon = bot.inventory.items().find(i => /sword|axe/.test(i.name))
+    const weapon = bestWeapon(bot)
     if (weapon) await bot.equip(weapon, 'hand').catch(() => {})
     const end = Date.now() + 20000
+    let lastPos = target.position.clone()
     while (Date.now() < end && target && target.isValid) {
+      lastPos = target.position.clone()
       if (bot.entity.position.distanceTo(target.position) > 3) {
         await walkTo(bot, new goals.GoalFollow(target, 2), 6000).catch(() => {})
       }
@@ -468,8 +586,14 @@ const impl = {
       }
       await sleep(600)
     }
-    await sleep(800)
-    return target.isValid ? `${entity} is still alive after 20s` : `killed the ${entity}. Inventory: ${invText(bot)}`
+    if (target.isValid) return `${entity} is still alive after 20s. Health ${Math.round(bot.health)}/20`
+    // walk onto the spot where it died so the drops are picked up
+    const before = invText(bot)
+    await sleep(500)
+    await walkTo(bot, new goals.GoalNear(lastPos.x, lastPos.y, lastPos.z, 0), 5000).catch(() => {})
+    await sleep(1200)
+    const after = invText(bot)
+    return `killed the ${entity}${after === before ? ' (it dropped nothing you could pick up)' : ''}. Health ${Math.round(bot.health)}/20. Inventory: ${after}`
   },
   async eat (a) {
     const foods = a.mcData.foodsByName
@@ -660,8 +784,10 @@ async function runTool (a, name, input) {
     let hurtTimer = null
     const hurt = new Promise(resolve => { if (interruptible) a.onHurt = () => { hurtTimer = setTimeout(() => resolve('__hurt__'), 150) } })
     try {
+      const run = a.bot.run = { cancelled: false }
       out = fn ? await Promise.race([fn(a, input), hurt]) : `unknown tool ${name}`
       if (out === '__hurt__') {
+        run.cancelled = true // the interrupted action must not keep walking or digging behind the next one
         haltPath(a.bot); try { a.bot.collectBlock.cancelTask() } catch {}
         out = `INTERRUPTED: ${a.hurt.text}. Your ${name} was stopped. Decide right now: fight back (attack), get away (goto), eat, or block yourself in (place).`
       }
